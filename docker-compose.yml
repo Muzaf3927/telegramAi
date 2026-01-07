@@ -1,0 +1,33 @@
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        container_name: telegramAi_app
+        working_dir: /var/www/html
+        volumes:
+            - ./:/var/www/html
+        env_file:
+            - .env
+        command: sh -lc "php artisan serve --host=0.0.0.0 --port=8876"
+        ports:
+            - "${APP_HTTP_PORT:-8876}:8876"
+        depends_on:
+            - db
+
+    db:
+        image: postgres:15-alpine
+        container_name: telegramAi_db
+        env_file:
+            - .env
+        environment:
+            POSTGRES_DB: ${DB_DATABASE}
+            POSTGRES_USER: ${DB_USERNAME}
+            POSTGRES_PASSWORD: ${DB_PASSWORD}
+        volumes:
+            - pgdata:/var/lib/postgresql/data
+        ports:
+            - "5432:5432"
+
+volumes:
+    pgdata:
