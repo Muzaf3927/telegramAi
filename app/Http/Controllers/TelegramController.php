@@ -129,28 +129,42 @@ class TelegramController extends Controller
      */
     private function handleStartCommand(int $chatId, array $user): void
     {
-        // Сохраняем или обновляем пользователя
-        $telegramUser = TelegramUser::updateOrCreate(
-            ['chat_id' => $chatId],
-            [
+        // Проверяем, существует ли пользователь
+        $telegramUser = TelegramUser::where('chat_id', $chatId)->first();
+
+        if ($telegramUser) {
+            // Пользователь уже существует - обновляем данные, но не меняем язык
+            $telegramUser->update([
+                'username' => $user['username'] ?? $telegramUser->username,
+                'first_name' => $user['first_name'] ?? $telegramUser->first_name,
+                'last_name' => $user['last_name'] ?? $telegramUser->last_name,
+                'is_active' => true,
+                'pending_action' => null,
+            ]);
+
+            // Если язык уже выбран, показываем главное меню
+            if ($telegramUser->language) {
+                $this->showMainMenu($chatId, $telegramUser->language);
+                return;
+            }
+        } else {
+            // Новый пользователь - создаем без языка
+            $telegramUser = TelegramUser::create([
+                'chat_id' => $chatId,
                 'username' => $user['username'] ?? null,
                 'first_name' => $user['first_name'] ?? null,
                 'last_name' => $user['last_name'] ?? null,
                 'is_active' => true,
                 'balance' => 0,
                 'pending_action' => null,
-                'language' => 'ru', // По умолчанию русский
-            ]
-        );
-
-        // Если язык уже выбран, показываем главное меню
-        if ($telegramUser->language) {
-            $this->showMainMenu($chatId, $telegramUser->language);
-            return;
+                'language' => null, // Язык не установлен - покажем выбор
+            ]);
         }
 
-        // Иначе показываем выбор языка
-        $this->showLanguageSelection($chatId);
+        // Показываем выбор языка, если он не установлен
+        if (!$telegramUser->language) {
+            $this->showLanguageSelection($chatId);
+        }
     }
 
     /**
