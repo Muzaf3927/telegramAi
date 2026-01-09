@@ -10,6 +10,7 @@ class TelegramUser extends Model
         'chat_id',
         'balance',
         'pending_action',
+        'language',
         'username',
         'first_name',
         'last_name',

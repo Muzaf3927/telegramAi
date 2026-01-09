@@ -4,16 +4,19 @@ namespace App\Http\Controllers;
 
 use App\Models\TelegramUser;
 use App\Services\TelegramService;
+use App\Services\TranslationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class TelegramController extends Controller
 {
     private TelegramService $telegramService;
+    private TranslationService $translationService;
 
-    public function __construct(TelegramService $telegramService)
+    public function __construct(TelegramService $telegramService, TranslationService $translationService)
     {
         $this->telegramService = $telegramService;
+        $this->translationService = $translationService;
     }
 
     /**
@@ -31,7 +34,7 @@ class TelegramController extends Controller
                 $this->handleMessage($update['message']);
             }
 
-            // Обработка callback query (нажатие на кнопку)
+            // Обработка callback query (нажатие на inline кнопку)
             if (isset($update['callback_query'])) {
                 $this->handleCallbackQuery($update['callback_query']);
             }
@@ -65,30 +68,56 @@ class TelegramController extends Controller
         // Получаем пользователя для проверки состояния
         $telegramUser = TelegramUser::where('chat_id', $chatId)->first();
 
-        // Обработка нажатий на кнопки клавиатуры
-        if ($text === '🎨 Генерация изображений') {
-            $this->handleImageGeneration($chatId);
+        if (!$telegramUser) {
+            $this->handleStartCommand($chatId, $user);
             return;
         }
 
-        if ($text === '🎬 Генерация видео') {
-            $this->handleVideoGeneration($chatId);
+        $language = $telegramUser->language ?? 'ru';
+
+        // Обработка выбора языка
+        if ($text === '🇷🇺 Русский' || $text === "🇺🇿 O'zbek") {
+            $selectedLanguage = $text === '🇷🇺 Русский' ? 'ru' : 'uz';
+            $telegramUser->update(['language' => $selectedLanguage]);
+            $this->showMainMenu($chatId, $selectedLanguage);
             return;
         }
 
-        if ($text === '💰 Баланс') {
-            $this->handleBalance($chatId);
+        // Обработка кнопки "Назад"
+        if ($text === $this->translationService->get('back', $language)) {
+            $this->showMainMenu($chatId, $language);
             return;
         }
 
-        if ($text === '💳 Пополнить счет') {
-            $this->handleDepositRequest($chatId);
+        // Обработка основных кнопок
+        if ($text === $this->translationService->get('generate_photo', $language)) {
+            $this->handlePhotoGeneration($chatId, $language);
+            return;
+        }
+
+        if ($text === $this->translationService->get('generate_video', $language)) {
+            $this->handleVideoGeneration($chatId, $language);
+            return;
+        }
+
+        if ($text === $this->translationService->get('generate_voice', $language)) {
+            $this->handleVoiceGeneration($chatId, $language);
+            return;
+        }
+
+        if ($text === $this->translationService->get('my_balance', $language)) {
+            $this->handleBalance($chatId, $language);
+            return;
+        }
+
+        if ($text === $this->translationService->get('deposit', $language)) {
+            $this->handleDepositRequest($chatId, $language);
             return;
         }
 
         // Обработка ввода суммы для пополнения
-        if ($telegramUser && $telegramUser->pending_action === 'deposit') {
-            $this->handleDepositAmount($chatId, $text, $telegramUser);
+        if ($telegramUser->pending_action === 'deposit') {
+            $this->handleDepositAmount($chatId, $text, $telegramUser, $language);
             return;
         }
 
@@ -101,111 +130,189 @@ class TelegramController extends Controller
     private function handleStartCommand(int $chatId, array $user): void
     {
         // Сохраняем или обновляем пользователя
-        TelegramUser::updateOrCreate(
+        $telegramUser = TelegramUser::updateOrCreate(
             ['chat_id' => $chatId],
             [
                 'username' => $user['username'] ?? null,
                 'first_name' => $user['first_name'] ?? null,
                 'last_name' => $user['last_name'] ?? null,
                 'is_active' => true,
-                'balance' => 0, // Инициализируем баланс
+                'balance' => 0,
                 'pending_action' => null,
+                'language' => 'ru', // По умолчанию русский
             ]
         );
 
-        // Создаем клавиатуру с кнопками
+        // Если язык уже выбран, показываем главное меню
+        if ($telegramUser->language) {
+            $this->showMainMenu($chatId, $telegramUser->language);
+            return;
+        }
+
+        // Иначе показываем выбор языка
+        $this->showLanguageSelection($chatId);
+    }
+
+    /**
+     * Показать выбор языка
+     */
+    private function showLanguageSelection(int $chatId): void
+    {
         $keyboard = $this->telegramService->createKeyboard([
             [
-                ['text' => '🎨 Генерация изображений'],
-                ['text' => '🎬 Генерация видео'],
-            ],
-            [
-                ['text' => '💰 Баланс'],
-                ['text' => '💳 Пополнить счет'],
+                ['text' => '🇷🇺 Русский'],
+                ['text' => "🇺🇿 O'zbek"],
             ],
         ]);
 
-        // Отправляем приветственное сообщение с кнопками
-        $welcomeText = "👋 Добро пожаловать!\n\n"
-            . "Я бот для генерации изображений и видео с помощью AI.\n\n"
-            . "Выберите модель:";
+        $text = $this->translationService->get('welcome', 'ru') . "\n\n" . $this->translationService->get('select_language', 'ru');
 
-        $this->telegramService->sendMessage($chatId, $welcomeText, $keyboard);
+        $this->telegramService->sendMessage($chatId, $text, $keyboard);
     }
 
     /**
-     * Обработка выбора генерации изображений
+     * Показать главное меню
      */
-    private function handleImageGeneration(int $chatId): void
+    private function showMainMenu(int $chatId, string $language): void
     {
-        $text = "🎨 Вы выбрали генерацию изображений!\n\n"
-            . "Напишите промпт для генерации изображения:";
+        $keyboard = $this->telegramService->createKeyboard([
+            [
+                ['text' => $this->translationService->get('generate_photo', $language)],
+                ['text' => $this->translationService->get('generate_video', $language)],
+            ],
+            [
+                ['text' => $this->translationService->get('generate_voice', $language)],
+            ],
+            [
+                ['text' => $this->translationService->get('my_balance', $language)],
+            ],
+        ]);
 
-        $this->telegramService->sendMessage($chatId, $text);
+        $text = $this->translationService->get('welcome', $language) . "\n\n" . $this->translationService->get('main_menu', $language);
+
+        $this->telegramService->sendMessage($chatId, $text, $keyboard);
     }
 
     /**
-     * Обработка выбора генерации видео
+     * Обработка генерации фото
      */
-    private function handleVideoGeneration(int $chatId): void
+    private function handlePhotoGeneration(int $chatId, string $language): void
     {
-        $text = "🎬 Вы выбрали генерацию видео!\n\n"
-            . "Напишите промпт для генерации видео:";
+        $keyboard = $this->telegramService->createKeyboard([
+            [
+                ['text' => $this->translationService->get('back', $language)],
+            ],
+        ]);
 
-        $this->telegramService->sendMessage($chatId, $text);
+        $text = $this->translationService->get('photo_prompt', $language);
+
+        $this->telegramService->sendMessage($chatId, $text, $keyboard);
+    }
+
+    /**
+     * Обработка генерации видео
+     */
+    private function handleVideoGeneration(int $chatId, string $language): void
+    {
+        $keyboard = $this->telegramService->createKeyboard([
+            [
+                ['text' => $this->translationService->get('back', $language)],
+            ],
+        ]);
+
+        $text = $this->translationService->get('video_prompt', $language);
+
+        $this->telegramService->sendMessage($chatId, $text, $keyboard);
+    }
+
+    /**
+     * Обработка генерации голоса
+     */
+    private function handleVoiceGeneration(int $chatId, string $language): void
+    {
+        $keyboard = $this->telegramService->createKeyboard([
+            [
+                ['text' => $this->translationService->get('back', $language)],
+            ],
+        ]);
+
+        $text = $this->translationService->get('voice_prompt', $language);
+
+        $this->telegramService->sendMessage($chatId, $text, $keyboard);
     }
 
     /**
      * Показать баланс пользователя
      */
-    private function handleBalance(int $chatId): void
+    private function handleBalance(int $chatId, string $language): void
     {
         $user = TelegramUser::where('chat_id', $chatId)->first();
-        
+
         if (!$user) {
-            $this->telegramService->sendMessage($chatId, '❌ Пользователь не найден. Отправьте /start');
+            $this->telegramService->sendMessage($chatId, $this->translationService->get('user_not_found', $language));
             return;
         }
 
         $balance = number_format($user->balance, 2, '.', ' ');
-        $text = "💰 Ваш баланс: <b>{$balance}</b> ₽";
+        $text = $this->translationService->get('balance_text', $language, ['balance' => $balance]);
 
-        $this->telegramService->sendMessage($chatId, $text);
+        $keyboard = $this->telegramService->createKeyboard([
+            [
+                ['text' => $this->translationService->get('deposit', $language)],
+            ],
+            [
+                ['text' => $this->translationService->get('back', $language)],
+            ],
+        ]);
+
+        $this->telegramService->sendMessage($chatId, $text, $keyboard);
     }
 
     /**
      * Запрос на пополнение счета
      */
-    private function handleDepositRequest(int $chatId): void
+    private function handleDepositRequest(int $chatId, string $language): void
     {
         $user = TelegramUser::where('chat_id', $chatId)->first();
-        
+
         if (!$user) {
-            $this->telegramService->sendMessage($chatId, '❌ Пользователь не найден. Отправьте /start');
+            $this->telegramService->sendMessage($chatId, $this->translationService->get('user_not_found', $language));
             return;
         }
 
         // Устанавливаем состояние ожидания ввода суммы
         $user->update(['pending_action' => 'deposit']);
 
-        $text = "💳 Пополнение счета\n\n"
-            . "Введите сумму для пополнения (например: 100 или 500.50):";
+        $keyboard = $this->telegramService->createKeyboard([
+            [
+                ['text' => $this->translationService->get('back', $language)],
+            ],
+        ]);
 
-        $this->telegramService->sendMessage($chatId, $text);
+        $text = $this->translationService->get('deposit_request', $language);
+
+        $this->telegramService->sendMessage($chatId, $text, $keyboard);
     }
 
     /**
      * Обработка введенной суммы для пополнения
      */
-    private function handleDepositAmount(int $chatId, string $text, TelegramUser $user): void
+    private function handleDepositAmount(int $chatId, string $text, TelegramUser $user, string $language): void
     {
         // Проверяем, является ли текст числом
         $amount = filter_var($text, FILTER_VALIDATE_FLOAT);
 
         if ($amount === false || $amount <= 0) {
+            $keyboard = $this->telegramService->createKeyboard([
+                [
+                    ['text' => $this->translationService->get('back', $language)],
+                ],
+            ]);
+
             $this->telegramService->sendMessage(
                 $chatId,
-                "❌ Неверная сумма. Пожалуйста, введите положительное число (например: 100 или 500.50):"
+                $this->translationService->get('deposit_invalid', $language),
+                $keyboard
             );
             return;
         }
@@ -217,11 +324,18 @@ class TelegramController extends Controller
         $newBalance = number_format($user->fresh()->balance, 2, '.', ' ');
         $amountFormatted = number_format($amount, 2, '.', ' ');
 
-        $text = "✅ Счет успешно пополнен!\n\n"
-            . "Пополнено: <b>{$amountFormatted}</b> ₽\n"
-            . "Новый баланс: <b>{$newBalance}</b> ₽";
+        $text = $this->translationService->get('deposit_success', $language, [
+            'amount' => $amountFormatted,
+            'balance' => $newBalance,
+        ]);
 
-        $this->telegramService->sendMessage($chatId, $text);
+        $keyboard = $this->telegramService->createKeyboard([
+            [
+                ['text' => $this->translationService->get('back', $language)],
+            ],
+        ]);
+
+        $this->telegramService->sendMessage($chatId, $text, $keyboard);
     }
 
     /**
@@ -230,7 +344,5 @@ class TelegramController extends Controller
     private function handleCallbackQuery(array $callbackQuery): void
     {
         // Здесь будет обработка нажатий на inline кнопки
-        // Пока оставляем пустым
     }
 }
-
