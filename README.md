@@ -1,5 +1,41 @@
 <p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
 
+## Telegram Bot
+
+### Настройка бота
+
+1. Токен бота уже добавлен в `config/services.php`. При необходимости измените его в `.env`:
+   ```
+   TELEGRAM_BOT_TOKEN=8396945717:AAEh7_dwSPrQRN-cJVfjUEgv39gjyDq5oS4
+   ```
+
+2. Выполните миграцию для создания таблицы пользователей:
+   ```bash
+   php artisan migrate
+   ```
+
+3. Установите webhook (замените URL на ваш публичный адрес):
+   ```bash
+   php artisan telegram:set-webhook https://yourdomain.com/api/telegram/webhook
+   ```
+
+   Или для локальной разработки используйте ngrok:
+   ```bash
+   ngrok http 8876
+   php artisan telegram:set-webhook https://your-ngrok-url.ngrok.io/api/telegram/webhook
+   ```
+
+### Функционал
+
+- При команде `/start` бот сохраняет `chat_id` пользователя в базу данных
+- Показывает клавиатуру с двумя кнопками:
+  - 🎨 Генерация изображений
+  - 🎬 Генерация видео
+
+### API Endpoint
+
+- `POST /api/telegram/webhook` - Webhook для получения обновлений от Telegram
+
 ## Балансы и транзакции (HTTP API)
 
 ### Эндпоинты
